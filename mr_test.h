@@ -9,11 +9,12 @@ typedef struct _mt_tshare_t {
 //	int gi_run;
 } mt_tshare_t;
 
-int   mt_tinit(char*);
+void  top_init();
+int   mt_tinit(char*, int);
 int   mt_queues_init();
 int   mt_queues_delete();
 void* mt_qrv_thread();
-int   mt_rmsg_proc(mmsg_t*, int);
+int   mt_rmsg_proc(test_mmsg*, int);
 int   mt_tmsg_node(MADR, int, mmsg_t*);
 void  mt_show_top();
 void  show_rqs();

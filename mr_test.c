@@ -1,6 +1,7 @@
 #include "../mr_common.h"
 #include "mr_test.h"
-
+#include <stdio.h>
+#include <stdlib.h>
 
 static key_t mt_qkey = -1;
 static int   mt_qid = -1; 
@@ -10,10 +11,32 @@ static mt_tshare_t  share = {
 	PTHREAD_COND_INITIALIZER
 };
 
+int write_id1(int id)
+{
+	FILE *fp;
+    char *path = "/home/kip/Desktop/wanghao";
+
+    fp = fopen(path,"w");
+    fprintf(fp, "%d\n", id);
+    fclose(fp);
+}
+
+int write_id2(int id)
+{
+	FILE *fp;
+    char *path = "/home/kip/Desktop/wanghao";
+
+    fp = fopen(path,"a");
+    fprintf(fp, "%d\n", id);
+    fclose(fp);
+}
+
 static pthread_t mrx_tid = -1;
-static int rqs[MAX_NODE_CNT];
-//???top.txt??
-static U8  top[MAX_NODE_CNT][MAX_NODE_CNT];
+static int rqs[MAX_NET_CNT][MAX_DATA_LENGTH];
+
+//¥À÷µ¥”top*.txt∂¡»Î
+static U8  top[MAX_NET_CNT][MAX_NODE_CNT][MAX_NODE_CNT];
+
 
 //deleted by test
 //fmd_t fmd[MAX_NODE_CNT];
@@ -21,14 +44,14 @@ static U8  top[MAX_NODE_CNT][MAX_NODE_CNT];
 int main(int argc, char* argv[])
 {
 	int len;
-	int j;
+	int i,j;
 	int rval, stop;
 	void *result = NULL;
 	
 	EPT(stderr, "%s: main thread id = %ld\n", argv[0], pthread_self());
 //	EPT(stderr, "sizeof(MADR) = %d\n", sizeof(MADR));
 
-	if (argc != 2) {
+	if (argc < 2) {
 		EPT(stderr, "mr_test: number of input paras is not correct\n");
 		rval = 1;
 		goto process_return;
@@ -43,15 +66,23 @@ int main(int argc, char* argv[])
 		goto process_return;
 	}
 
-	/* initialize topology */
-	//???ÂèÇÊï∞ÊòØtop.txt
-	rval = mt_tinit(argv[1]);
-	if (rval != 0) {
-		EPT(stderr, "mr_test: errors occur in topology initialization\n");
-		rval = 2;
-		goto process_return;
-	}
+	write_id1(mt_qid);
 
+	/* initialize topology */
+	//≤Œ ˝ «top.txt
+	top_init();
+	for(i = 1; i < argc; i++)
+	{
+		rval = mt_tinit(argv[i], i);
+		if (rval != 0) {
+			EPT(stderr, "mr_test: errors occur in topology %d initialization\n", i);
+			rval = 2;
+			goto process_return;
+		}
+		mt_show_top();
+	}
+	
+	
 	/* create receiving msg thread */
 	rval = pthread_create(&mrx_tid, NULL, mt_qrv_thread, &mt_qid);
 	if (rval != 0) {
@@ -104,7 +135,8 @@ int mt_queues_delete()
 void* mt_qrv_thread(void *arg)
 {
 	int qid, rcnt;
-	mmsg_t rx_msg;
+	test_mmsg tstmsg;
+//	mmsg_t rx_msg;
 	int rval, stop;
 	
 	pthread_detach(pthread_self());	
@@ -124,9 +156,9 @@ void* mt_qrv_thread(void *arg)
 	rval = 0;
 	stop = 0;
 	while(0 == stop) {
-		memset(&rx_msg, 0, sizeof(rx_msg));
-//		EPT(stdout, "mr_test: reveive msg queue at qid %d\n", qid);
-		rcnt = msgrcv(qid, &rx_msg, MAX_DATA_LENGTH, 0, 0);
+		memset(&tstmsg, 0, sizeof(tstmsg));
+
+		rcnt = msgrcv(qid, &tstmsg, MAX_DATA_LENGTH, 0, 0);
 		if (rcnt < 0) {
 			if (EIDRM != errno) {
 				EPT(stderr, "mr_test: error in receiving msg, no:%d, meaning:%s\n", errno, strerror(errno));
@@ -138,10 +170,10 @@ void* mt_qrv_thread(void *arg)
 			break;
 		}
 
-		rval = mt_rmsg_proc(&rx_msg, rcnt);
+		rval = mt_rmsg_proc(&tstmsg, rcnt);
 		if (rval != 0) {
 			/* report error */
-			EPT(stderr, "mr_test: error occurs, the node of rx_msg  = %d", rx_msg.node);
+			EPT(stderr, "mr_test: error occurs, the node of tstmsg  = %d", tstmsg.mesg.node);
 		}
 	}
 
@@ -155,42 +187,53 @@ thread_return:
 	pthread_exit((void *)&rval);
 }
 
-int mt_rmsg_proc(mmsg_t *msg, int cnt)
+int mt_rmsg_proc(test_mmsg *tstmsg, int cnt)
 {
 	MADR node;
 	int qid;
 	int j, rval = 0;
+	int net;
 
-	node = msg->node;
-	if (msg->mtype == MMSG_MT_RQID) 		//node : sa
+	net = (int)tstmsg->mtype;
+	node = tstmsg->mesg.node;
+	if (tstmsg->mesg.mtype == MMSG_MT_RQID) 		//node : sa
 	{
-		qid = *(int*)msg->data;						//ask???
+		qid = *(int*)tstmsg->mesg.data;			//ask???
 
-		if (MR_ISUNI(node)) {
-			rqs[node-1] = qid;
+		if (NET_ISUNI(net) && MR_ISUNI(node)) {
+			rqs[net-1][node-1] = qid;
+			write_id2(qid);
 		}
 		else {
-			EPT(stderr, "mt_test: node error\n");
+			EPT(stderr, "mt_test: node[%d][%d] error\n",net, node);
 			rval = 1;
 		}
 	}
-	else /* ¬≤¬ª√ç√π√ó√î√â√≠¬∑¬¢√ã√ç¬£¬¨√á√í√î√ö√ç√ò√Ü√ã¬µ√Ñ√î√ä√ê√≠√è√Ç¬∑¬¢ */		//from others sop packet
+	else 		//from others sop packet
 	{
-		for (j = 0; j < MAX_NODE_CNT; j++) 	
+
+		EPT(stderr, "receive a mesg from node[%d][%d]\n", net, node);
+		cnt -= sizeof(long);
+		
+		for (j = 0; j < MAX_NODE_CNT; j++)
 		{
-			if (j == node-1 || top[node-1][j] == 0)   /*if (j == node-1 || top[node-1][j].link == 0) */
+			if (j == node-1 || top[net-1][node-1][j] == 0)   /*if (j == node-1 || top[node-1][j].link == 0) */
 				continue;
-			if (rqs[j] == -1) 
+
+			if (rqs[net-1][j] == -1) 
 			{
-				EPT(stderr, "mr_test: can not get the qid of rx node %d\n", j+1);
+				EPT(stderr, "mr_test: can not get the qid of rx node[%d][%d]\n",net,j+1);
 				continue;
 			}
 //deleted by test, delete the condition 
 //			if (mt_getlp() <= top[node-1][j].relb)			
 													//	srand(qid)	rand()/RAND_MAX
-			rval = msgsnd(rqs[j], (void *)msg, cnt, 0);	//Âè™Ë¥üË¥£ËΩ¨ÂèëÔºÅÔºÅÔºÅ
-			EPT(stderr, "mt_test: msgsnd() write msg at qid %d of node %d\n", rqs[j], j+1);
-			if ( rval < 0 ) 
+			
+			EPT(stderr, "mt_test: msgsnd() write msg(size:%d) at qid %d of node[%d][%d]\n", cnt, rqs[net-1][j], net, j+1);
+
+			rval = msgsnd(rqs[net-1][j], (void *)&(tstmsg->mesg), cnt, 0);	//?????!!!
+			
+			if (rval < 0) 
 			{  
 				EPT(stderr, "mr_test: msgsnd() write msg failed,errno=%d[%s]\n", errno, strerror(errno));  
 			}
@@ -229,41 +272,55 @@ int mt_rmsg_proc(mmsg_t *msg, int cnt)
 	return rval;
 }
 
-//?Êäätop.txt??????txt‰∏≠ÁöÑÊï∞ÊçÆËØªÂÖ•topÊï∞ÁªÑ??
-int mt_tinit(char *name)
+void top_init()
+{
+	int i, j, k;
+/* initiate */
+	for (i = 0; i < MAX_NET_CNT; i++) 
+	{
+		for (j = 0; j < MAX_NODE_CNT; j++)
+		{
+			rqs[i][j] = -1;
+			for(k = 0; k < MAX_NODE_CNT; k++)
+			{
+				top[i][j][k] = 0;
+				//deleted by test
+				/*
+							top[i][j].link = 0;
+							top[i][j].relb = 0.0;
+				*/
+			}
+		}
+	}
+}
+
+//∞—top.txt÷–µƒ ˝æ›∂¡»Îtop ˝◊È
+int mt_tinit(char *name, int num)
 {
 	int i, j;
 	int rval = 0;
 	FILE *fp = NULL;
-	//a+ÊñπÂºèÊâìÂºÄÔºå‰∏çÊ∏ÖÁ©∫Ê∫êÊñá‰ª∂ÂÜÖÂÆπÔºåÂè™Âú®Êú´Â∞æËøΩÂä†
+	//a+∑Ω Ω¥Úø™£¨≤ª«Âø’‘¥Œƒº˛ƒ⁄»›£¨÷ª‘⁄ƒ©Œ≤◊∑º”
 	fp = fopen(name, "a+");
 	if (NULL == fp) 
 	{
 		rval = 1;
 		goto fexit;
 	}
-
-	/* clear */
-	for (i = 0; i < MAX_NODE_CNT; i++) 
+	while(!feof(fp)) 	//≈–∂œŒƒº˛ «∑ÒΩ· ¯°£feof£®fp£©”√”⁄≤‚ ‘fpÀ˘÷∏œÚµƒŒƒº˛µƒµ±«∞◊¥Ã¨ «∑ÒŒ™°∞Œƒº˛Ω· ¯°±°£»Áπ˚ «£¨∫Ø ˝‘Ú∑µªÿµƒ÷µ «1£®’Ê£©£¨∑Ò‘ÚŒ™0£®ºŸ£©
 	{
-		rqs[i] = -1;
-		for (j = 0; j < MAX_NODE_CNT; j++)
-			top[i][j] = 0;
-//deleted by test
-/*
-			top[i][j].link = 0;
-			top[i][j].relb = 0.0;
-*/
-	}
-
-	while(!feof(fp)) 	//?????????Âà§Êñ≠Êñá‰ª∂ÊòØÂê¶ÁªìÊùü„ÄÇfeofÔºàfpÔºâÁî®‰∫éÊµãËØïfpÊâÄÊåáÂêëÁöÑÊñá‰ª∂ÁöÑÂΩìÂâçÁä∂ÊÄÅÊòØÂê¶‰∏∫‚ÄúÊñá‰ª∂ÁªìÊùü‚Äù„ÄÇÂ¶ÇÊûúÊòØÔºåÂáΩÊï∞ÂàôËøîÂõûÁöÑÂÄºÊòØ1ÔºàÁúüÔºâÔºåÂê¶Âàô‰∏∫0ÔºàÂÅáÔºâ(fp)????fp??????????????‚Äú????‚Äù????,????????1(?),???0(?)
-	{
-		fscanf(fp, "%d %d", &i, &j); //‰ªéÊµÅ‰∏≠ÊâßË°åÊ†ºÂºèÂåñËæìÂÖ•ÁöÑÂáΩÊï∞. fscanfÈÅáÂà∞Á©∫Ê†ºÂíåÊç¢Ë°åÊó∂ÁªìÊùü,ËøîÂõûÂÄºÔºöÊï¥ÂûãÔºåÊï∞ÂÄºÁ≠â‰∫é[argument...]ÁöÑ‰∏™Êï∞
+		fscanf(fp, "%d %d", &i, &j); //¥”¡˜÷–÷¥––∏Ò ΩªØ ‰»Îµƒ∫Ø ˝. fscanf”ˆµΩø’∏Ò∫Õªª–– ±Ω· ¯,∑µªÿ÷µ£∫’˚–Õ£¨ ˝÷µµ»”⁄[argument...]µƒ∏ˆ ˝
 		if (MR_ISUNI(i) && MR_ISUNI(j))
-			top[i-1][j-1] = 1;
+		{
+			if(1 == num)
+				top[0][i-1][j-1] = 1;
+			else
+				top[num+2][i-1][j-1] = 1;
+		}
 	}
+	
 
-	mt_show_top();
+
 fexit:
 	if (NULL != fp)
 		fclose(fp);
@@ -271,31 +328,47 @@ fexit:
 }
 
 
+
 void mt_show_top()
 {
-	int i,j;
+	int i, j, k;
 	int vld = 0;
 
-	for (i = 0; i < MAX_NODE_CNT; i++) 
+
+	for(k = 0; k < MAX_NET_CNT; k++)
 	{
-		vld = 0;
-		for (j = 0; j < MAX_NODE_CNT; j++) 
+		if( (k > 0) && (k < 4) )
+			continue;
+
+		for (i = 0; i < MAX_NODE_CNT; i++) 
 		{
-			if (0 == top[i][j])
-				continue;
-			vld = 1;			
-			EPT(stderr, "top[%d][%d]=%d  ", i+1, j+1, top[i][j]);
+			vld = 0;
+			for (j = 0; j < MAX_NODE_CNT; j++) 
+			{
+				if (0 == top[k][i][j])
+				{
+					continue;
+				}
+				vld = 1;			
+				EPT(stderr, "top[%d][%d][%d]=%d", k+1, i+1, j+1, top[k][i][j]);
+			}
+			if (1 == vld)
+				EPT(stderr, "\n");
 		}
 		if (1 == vld)
 			EPT(stderr, "\n");
 	}
+	
 }
+
 
 void show_rqs()
 {
-	int i;
-	for (i = 0; i < MAX_NODE_CNT; i++) {
-		EPT(stderr, "%3d %d\n", i+1, rqs[i]);
+	int i, j;
+	for (i = 0; i < MAX_NET_CNT; i++)
+	{
+		for(j = 0; j < MAX_NODE_CNT; j++)
+			EPT(stderr, "%3d.%3d %d\n", i+1, j+1, rqs[i][j]);
 	}
 }
 
